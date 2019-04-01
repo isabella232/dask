@@ -428,16 +428,6 @@ def test_clip(lower, upper):
     assert_eq(ds.clip(lower=lower), s.clip(lower=lower))
     assert_eq(ds.clip(upper=upper), s.clip(upper=upper))
 
-    assert_eq(ddf.clip_lower(lower), df.clip_lower(lower))
-    assert_eq(ddf.clip_lower(upper), df.clip_lower(upper))
-    assert_eq(ddf.clip_upper(lower), df.clip_upper(lower))
-    assert_eq(ddf.clip_upper(upper), df.clip_upper(upper))
-
-    assert_eq(ds.clip_lower(lower), s.clip_lower(lower))
-    assert_eq(ds.clip_lower(upper), s.clip_lower(upper))
-    assert_eq(ds.clip_upper(lower), s.clip_upper(lower))
-    assert_eq(ds.clip_upper(upper), s.clip_upper(upper))
-
 
 def test_squeeze():
     df = pd.DataFrame({'x': [1, 3, 6]})
@@ -905,6 +895,29 @@ def test_dataframe_quantile():
 
     assert_eq(ddf.quantile(axis=1), df.quantile(axis=1))
     pytest.raises(ValueError, lambda: ddf.quantile([0.25, 0.75], axis=1))
+
+
+def test_quantile_for_possibly_unsorted_q():
+    '''check that quantile is giving correct answers even when quantile parameter, q, may be unsorted.
+
+    See https://github.com/dask/dask/issues/4642.
+    '''
+    # prepare test case where percentiles should equal values
+    A = da.arange(0, 101)
+    ds = dd.from_dask_array(A)
+
+    for q in [[0.25, 0.50, 0.75], [0.25, 0.50, 0.75, 0.99], [0.75, 0.5, 0.25],
+              [0.25, 0.99, 0.75, 0.50]]:
+        r = ds.quantile(q).compute()
+        assert_eq(r.loc[0.25], 25.0)
+        assert_eq(r.loc[0.50], 50.0)
+        assert_eq(r.loc[0.75], 75.0)
+
+    r = ds.quantile([0.25]).compute()
+    assert_eq(r.loc[0.25], 25.0)
+
+    r = ds.quantile(0.25).compute()
+    assert_eq(r, 25.0)
 
 
 def test_index():
@@ -1492,6 +1505,16 @@ def test_fillna():
               ddf.fillna(method='pad', limit=3))
 
 
+def test_fillna_duplicate_index():
+    @dask.delayed
+    def f():
+        return pd.DataFrame(dict(a=[1.0], b=[np.NaN]))
+
+    ddf = dd.from_delayed([f(), f()], meta=dict(a=float, b=float))
+    ddf.b = ddf.b.fillna(ddf.a)
+    ddf.compute()
+
+
 def test_fillna_multi_dataframe():
     df = tm.makeMissingDataframe(0.8, 42)
     ddf = dd.from_pandas(df, npartitions=5, sort=False)
@@ -1984,7 +2007,7 @@ def test_rename_index():
 
 
 def test_to_timestamp():
-    index = pd.PeriodIndex(freq='A', start='1/1/2001', end='12/1/2004')
+    index = pd.period_range(freq='A', start='1/1/2001', end='12/1/2004')
     df = pd.DataFrame({'x': [1, 2, 3, 4], 'y': [10, 20, 30, 40]}, index=index)
     ddf = dd.from_pandas(df, npartitions=3)
     assert_eq(ddf.to_timestamp(), df.to_timestamp())
@@ -2116,6 +2139,12 @@ def test_apply_warns():
     with pytest.warns(None) as w:
         ddf.apply(func, axis=1, meta=(None, int))
     assert len(w) == 0
+
+    with pytest.warns(UserWarning) as w:
+        ddf.apply(lambda x: x, axis=1)
+    assert len(w) == 1
+    assert "'x'" in str(w[0].message)
+    assert "int64" in str(w[0].message)
 
 
 def test_applymap():

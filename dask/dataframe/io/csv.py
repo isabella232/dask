@@ -249,7 +249,8 @@ def text_blocks_to_pandas(reader, block_lists, header, head, kwargs,
     if collection:
         if path:
             head = head.assign(**{
-                colname: pd.Categorical.from_codes(np.zeros(len(head)), paths)
+                colname: pd.Categorical.from_codes(
+                    np.zeros(len(head), dtype=int), paths)
             })
         if len(unknown_categoricals):
             head = clear_known_categories(head, cols=unknown_categoricals)
@@ -288,8 +289,8 @@ def read_pandas(reader, urlpath, blocksize=AUTO_BLOCKSIZE, collection=True,
     if include_path_column and isinstance(include_path_column, bool):
         include_path_column = 'path'
     if 'index' in kwargs or 'index_col' in kwargs:
-        raise ValueError("Keyword 'index' not supported "
-                         "dd.{0}(...).set_index('my-index') "
+        raise ValueError("Keywords 'index' and 'index_col' not supported. "
+                         "Use dd.{0}(...).set_index('my-index') "
                          "instead".format(reader_name))
     for kw in ['iterator', 'chunksize']:
         if kw in kwargs:

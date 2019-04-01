@@ -388,17 +388,26 @@ def _nonempty_index(idx):
         # and https://github.com/pandas-dev/pandas/issues/16515
         # This doesn't mean `_meta_nonempty` should ever rely on
         # `self.monotonic_increasing` or `self.monotonic_decreasing`
-        data = [start, '1970-01-02'] if idx.freq is None else None
-        return pd.DatetimeIndex(data, start=start, periods=2, freq=idx.freq,
-                                tz=idx.tz, name=idx.name)
+        try:
+            return pd.date_range(start=start, periods=2, freq=idx.freq,
+                                 tz=idx.tz, name=idx.name)
+        except ValueError:  # older pandas versions
+            data = [start, '1970-01-02'] if idx.freq is None else None
+            return pd.DatetimeIndex(data, start=start, periods=2, freq=idx.freq,
+                                    tz=idx.tz, name=idx.name)
     elif typ is pd.PeriodIndex:
         return pd.period_range(start='1970-01-01', periods=2, freq=idx.freq,
                                name=idx.name)
     elif typ is pd.TimedeltaIndex:
         start = np.timedelta64(1, 'D')
-        data = [start, start + 1] if idx.freq is None else None
-        return pd.TimedeltaIndex(data, start=start, periods=2, freq=idx.freq,
-                                 name=idx.name)
+        try:
+            return pd.timedelta_range(start=start, periods=2, freq=idx.freq,
+                                      name=idx.name)
+        except ValueError:  # older pandas versions
+            start = np.timedelta64(1, 'D')
+            data = [start, start + 1] if idx.freq is None else None
+            return pd.TimedeltaIndex(data, start=start, periods=2,
+                                     freq=idx.freq, name=idx.name)
     elif typ is pd.CategoricalIndex:
         if len(idx.categories) == 0:
             data = pd.Categorical(_nonempty_index(idx.categories),
@@ -409,8 +418,12 @@ def _nonempty_index(idx):
         return pd.CategoricalIndex(data, name=idx.name)
     elif typ is pd.MultiIndex:
         levels = [_nonempty_index(l) for l in idx.levels]
-        labels = [[0, 0] for i in idx.levels]
-        return pd.MultiIndex(levels=levels, labels=labels, names=idx.names)
+        codes = [[0, 0] for i in idx.levels]
+        try:
+            return pd.MultiIndex(levels=levels, codes=codes, names=idx.names)
+        except TypeError:  # older pandas versions
+            return pd.MultiIndex(levels=levels, labels=codes, names=idx.names)
+
     raise TypeError("Don't know how to handle index of "
                     "type {0}".format(type(idx).__name__))
 
@@ -499,18 +512,27 @@ def _nonempty_series(s, idx=None):
 
 def is_dataframe_like(df):
     """ Looks like a Pandas DataFrame """
-    return set(dir(df)) > {'dtypes', 'columns', 'groupby', 'head'} and not isinstance(df, type)
+    typ = type(df)
+    return (all(hasattr(typ, name)
+                for name in ('groupby', 'head', 'merge', 'mean')) and
+            all(hasattr(df, name) for name in ('dtypes',)) and not
+            any(hasattr(typ, name)
+                for name in ('value_counts', 'dtype')))
 
 
 def is_series_like(s):
     """ Looks like a Pandas Series """
-    return set(dir(s)) > {'name', 'dtype', 'groupby', 'head'} and not isinstance(s, type)
+    typ = type(s)
+    return (all(hasattr(typ, name) for name in ('groupby', 'head', 'mean')) and
+            all(hasattr(s, name) for name in ('dtype', 'name')) and
+            'index' not in typ.__name__.lower())
 
 
 def is_index_like(s):
     """ Looks like a Pandas Index """
-    attrs = set(dir(s))
-    return attrs > {'name', 'dtype'} and 'head' not in attrs and not isinstance(s, type)
+    typ = type(s)
+    return (all(hasattr(s, name) for name in ('name', 'dtype'))
+            and 'index' in typ.__name__.lower())
 
 
 def check_meta(x, meta, funcname=None, numeric_equal=True):
@@ -661,7 +683,7 @@ def _check_dask(dsk, check_names=True, check_dtypes=True, result=None):
 def _maybe_sort(a):
     # sort by value, then index
     try:
-        if isinstance(a, pd.DataFrame):
+        if is_dataframe_like(a):
             if set(a.index.names) & set(a.columns):
                 a.index.names = ['-overlapped-index-name-%d' % i
                                  for i in range(len(a.index.names))]
@@ -734,7 +756,7 @@ def assert_divisions(ddf):
         return
 
     def index(x):
-        if isinstance(x, pd.Index):
+        if is_index_like(x):
             return x
         try:
             return x.index.get_level_values(0)
@@ -776,11 +798,11 @@ def assert_dask_dtypes(ddf, res, numeric_equal=True):
     if numeric_equal:
         eq_types.update(('i', 'f'))
 
-    if isinstance(res, pd.DataFrame):
+    if not is_dask_collection(res) and is_dataframe_like(res):
         for col, a, b in pd.concat([ddf._meta.dtypes, res.dtypes],
                                    axis=1).itertuples():
             assert (a.kind in eq_types and b.kind in eq_types) or (a == b)
-    elif isinstance(res, (pd.Series, pd.Index)):
+    elif not is_dask_collection(res) and (is_index_like(res) or is_series_like(res)):
         a = ddf._meta.dtype
         b = res.dtype
         assert (a.kind in eq_types and b.kind in eq_types) or (a == b)
