@@ -2194,9 +2194,8 @@ def from_zarr(url, component=None, storage_options=None, chunks=None,name=None, 
     chunks = chunks if chunks is not None else z.chunks
     if name is None:
         name = 'from-zarr-' + tokenize(z, component, storage_options, chunks, **kwargs)
-    
-    return from_array(z,  chunks, name = name)
-    
+    return from_array(z, chunks, name=name )
+
 
 def to_zarr(arr, url, component=None, storage_options=None,
             overwrite=False, compute=True, return_stored=False, **kwargs):
